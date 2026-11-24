@@ -116,12 +116,31 @@ export function saveLocalSubmittedCastingPhotos(record: LocalCastingPhotoRecord)
 
 export function matchLocalPhotosToApplication(
   app: CastingApplication,
-  records: LocalCastingPhotoRecord[]
+  records: LocalCastingPhotoRecord[],
+  availableServerUrls?: Set<string> | null
 ): { fotoCara: string; fotoCuerpo: string } {
   const existingCara = typeof app.foto_cara === 'string' ? app.foto_cara.trim() : '';
   const existingCuerpo = typeof app.foto_cuerpo === 'string' ? app.foto_cuerpo.trim() : '';
-  if (existingCara || existingCuerpo) {
-    return { fotoCara: existingCara, fotoCuerpo: existingCuerpo };
+
+  const isExistingCaraUnavailableServerPath =
+    existingCara.startsWith('/api/casting-photos/') &&
+    availableServerUrls !== undefined &&
+    availableServerUrls !== null &&
+    !availableServerUrls.has(existingCara);
+  const isExistingCuerpoUnavailableServerPath =
+    existingCuerpo.startsWith('/api/casting-photos/') &&
+    availableServerUrls !== undefined &&
+    availableServerUrls !== null &&
+    !availableServerUrls.has(existingCuerpo);
+
+  if (
+    (existingCara && !isExistingCaraUnavailableServerPath) ||
+    (existingCuerpo && !isExistingCuerpoUnavailableServerPath)
+  ) {
+    return {
+      fotoCara: isExistingCaraUnavailableServerPath ? '' : existingCara,
+      fotoCuerpo: isExistingCuerpoUnavailableServerPath ? '' : existingCuerpo,
+    };
   }
 
   const appEmail = normalizeEmail(app.correo);
@@ -136,11 +155,31 @@ export function matchLocalPhotosToApplication(
     records.find((r) => appName && normalizeName(r.nombre, r.apellidos) === appName);
 
   if (!match) {
-    return { fotoCara: '', fotoCuerpo: '' };
+    return { fotoCara: existingCara, fotoCuerpo: existingCuerpo };
   }
 
+  const resolvedCara =
+    match.fotoCaraDataUrl ||
+    (match.fotoCaraUrl &&
+    (!match.fotoCaraUrl.startsWith('/api/casting-photos/') ||
+      !availableServerUrls ||
+      availableServerUrls.has(match.fotoCaraUrl))
+      ? match.fotoCaraUrl
+      : '') ||
+    existingCara;
+
+  const resolvedCuerpo =
+    match.fotoCuerpoDataUrl ||
+    (match.fotoCuerpoUrl &&
+    (!match.fotoCuerpoUrl.startsWith('/api/casting-photos/') ||
+      !availableServerUrls ||
+      availableServerUrls.has(match.fotoCuerpoUrl))
+      ? match.fotoCuerpoUrl
+      : '') ||
+    existingCuerpo;
+
   return {
-    fotoCara: match.fotoCaraUrl || match.fotoCaraDataUrl || '',
-    fotoCuerpo: match.fotoCuerpoUrl || match.fotoCuerpoDataUrl || '',
+    fotoCara: resolvedCara,
+    fotoCuerpo: resolvedCuerpo,
   };
 }

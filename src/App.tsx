@@ -43,7 +43,15 @@ import {
   HelpCircle,
   Globe
 } from 'lucide-react';
-import { supabase, getCachedModels, getCachedBookings, invalidateModelsCache, invalidateBookingsCache } from './lib/supabase';
+import {
+  supabase,
+  getSessionSingleFlight,
+  clearSessionCache,
+  getCachedModels,
+  getCachedBookings,
+  invalidateModelsCache,
+  invalidateBookingsCache,
+} from './lib/supabase';
 import { Model } from './types';
 import { ManagerDashboard } from './components/ManagerDashboard';
 import { TouchLightbox } from './components/TouchLightbox';
@@ -1096,9 +1104,22 @@ const CardImages = ({ mainPhoto, secondPhoto, model, isTouchActive, lang }: any)
   );
 };
 
-export default function App() {
+interface CatalogHeroSectionProps {
+  lang: 'es' | 'en';
+  currentHeroIdx: number;
+  heroImageSrc: string;
+  castingActive: boolean;
+  openCastingPage: () => void;
+}
+
+const CatalogHeroSection: React.FC<CatalogHeroSectionProps> = ({
+  lang,
+  currentHeroIdx,
+  heroImageSrc,
+  castingActive,
+  openCastingPage,
+}) => {
   const heroRef = useRef<HTMLElement>(null);
-  const { scrollY } = useScroll();
   const { scrollYProgress: heroScrollProgress } = useScroll({
     target: heroRef,
     offset: ["start start", "end start"]
@@ -1108,6 +1129,147 @@ export default function App() {
   const heroScrollBlur = useTransform(heroScrollProgress, [0, 0.6, 0.95], ["blur(0px)", "blur(6px)", "blur(18px)"]);
   const heroScrollScale = useTransform(heroScrollProgress, [0, 1], [1, 0.94]);
   const heroScrollY = useTransform(heroScrollProgress, [0, 1], [0, 60]);
+
+  return (
+    <section
+      id="hero-section"
+      ref={heroRef}
+      className="relative h-[100dvh] min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden"
+    >
+      {/* Background Slideshow con efecto Ken Burns y desenfoque al scroll */}
+      <motion.div
+        style={{ opacity: heroScrollOpacity, filter: heroScrollBlur }}
+        className="absolute inset-0 z-0 bg-[#0A0A0A] overflow-hidden pointer-events-none"
+      >
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={currentHeroIdx}
+            initial={{ opacity: 0, filter: "blur(20px)" }}
+            animate={{ opacity: 0.25, filter: "blur(0px)" }}
+            exit={{ opacity: 0, filter: "blur(20px)" }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
+            className="absolute inset-0 w-full h-full"
+          >
+            <motion.img
+              src={heroImageSrc}
+              alt=""
+              className="w-full h-full object-cover origin-center grayscale contrast-[1.1] brightness-[0.7]"
+              initial={{ scale: 1.0, x: "-1%", y: "-1%" }}
+              animate={{ scale: 1.08, x: "1%", y: "1%" }}
+              transition={{ duration: 7, ease: "linear" }}
+            />
+          </motion.div>
+        </AnimatePresence>
+        {/* Degradados sutiles para mantener el contraste de texto óptimo */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-[#0A0A0A]/80 z-10 pointer-events-none"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0A0A0A]/40 via-transparent to-[#0A0A0A]/40 z-10 pointer-events-none"></div>
+      </motion.div>
+
+      {/* Rejilla decorativa estilizada */}
+      <motion.div
+        style={{ opacity: heroScrollOpacity }}
+        className="absolute inset-0 pointer-events-none"
+      >
+        <div className="absolute inset-0 opacity-10 bg-[linear-gradient(rgba(204,0,0,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(204,0,0,0.08)_1px,transparent_1px)] bg-[size:60px_60px] z-10"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-[#CC0000] opacity-[0.06] rounded-full filter blur-[100px] z-10"></div>
+      </motion.div>
+
+      <motion.div
+        style={{
+          opacity: heroScrollOpacity,
+          filter: heroScrollBlur,
+          scale: heroScrollScale,
+          y: heroScrollY
+        }}
+        className="relative z-10 text-center max-w-5xl px-4 flex flex-col items-center will-change-transform"
+      >
+        <h1 className="flex flex-col items-center justify-center leading-none text-center select-none mb-3 sm:mb-5">
+          {/* 'MODELOS' / 'MODELS' - Animación inicial palabra */}
+          <motion.span
+            initial={{ opacity: 0, y: 25 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.9, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="font-condensed text-7xl sm:text-8xl md:text-9xl lg:text-[11rem] xl:text-[13rem] text-white leading-none tracking-wider uppercase block drop-shadow-[0_6px_28px_rgba(0,0,0,0.95)]"
+          >
+            {TRANSLATIONS[lang].models.toUpperCase()}
+          </motion.span>
+
+          {/* 'Planet' centrado alineado al medio */}
+          <motion.div
+            initial={{ opacity: 0, y: 20, rotate: -3 }}
+            animate={{ opacity: 1, y: 0, rotate: -2 }}
+            transition={{ duration: 0.8, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className="inline-flex items-center justify-center -mt-3 sm:-mt-5 md:-mt-8 z-20"
+          >
+            <span className="font-brush text-5xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-9xl text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.95)] tracking-wide">
+              Planet
+            </span>
+          </motion.div>
+        </h1>
+
+        {/* 'Catálogo Oficial · 2026' - Animación inicial subtítulo con acento de rojo de marca en el separador */}
+        <motion.p
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          className="font-sans font-medium text-xs sm:text-sm md:text-base tracking-[0.2em] uppercase text-white/90 mt-5 sm:mt-7 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]"
+        >
+          {lang === 'es' ? (
+            <>Catálogo Oficial <span className="text-[#CC0000] font-bold">·</span> 2026</>
+          ) : (
+            <>Official Catalog <span className="text-[#CC0000] font-bold">·</span> 2026</>
+          )}
+        </motion.p>
+
+        {/* Botón Explorar integrado armónicamente */}
+        <motion.button
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
+          onClick={() => {
+            const target = document.getElementById('featured-models-coverflow-section') || document.getElementById('filter-bar-container');
+            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+          title={lang === 'es' ? 'Ir a modelos destacadas y catálogo' : 'Go to featured models and catalog'}
+          className="mt-8 sm:mt-11 px-6 py-2.5 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 hover:border-white/30 text-white/75 hover:text-white text-[11px] font-semibold tracking-[0.25em] uppercase rounded-full cursor-pointer transition-all duration-300 shadow-sm z-20 flex items-center gap-2 group"
+        >
+          <span>{TRANSLATIONS[lang].explore}</span>
+          <ChevronDown className="w-3.5 h-3.5 text-white/50 group-hover:text-white transition-transform duration-300 group-hover:translate-y-0.5" />
+        </motion.button>
+      </motion.div>
+
+      {/* Invitación discreta y sugerente anclada al pie del Hero sin interrumpir el centro visual */}
+      {castingActive && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, delay: 1.25, ease: [0.16, 1, 0.3, 1] }}
+          className="absolute bottom-5 sm:bottom-8 inset-x-0 z-20 flex justify-center px-4 pointer-events-none"
+        >
+          <button
+            id="hero-casting-notice"
+            type="button"
+            onClick={openCastingPage}
+            className="pointer-events-auto group inline-flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 py-2 px-4 bg-black/65 hover:bg-black/80 backdrop-blur-md border border-white/15 hover:border-[#E2BA57]/45 rounded-sm text-[13px] sm:text-[15px] font-sans tracking-normal text-white/90 hover:text-white transition-all cursor-pointer shadow-lg"
+          >
+            <span className="italic text-white/85 group-hover:text-white transition-colors">
+              {lang === 'es'
+                ? '¿Te imaginas en el próximo videoclip?'
+                : 'Picture yourself in our next music video?'}
+            </span>
+            <span className="text-[#CC0000] font-bold" aria-hidden="true">·</span>
+            <span className="uppercase tracking-[0.04em] text-[13px] sm:text-[14px] font-semibold text-[#FCE99F] underline underline-offset-4 decoration-[#CC0000] group-hover:text-white">
+              {lang === 'es' ? 'Casting 28–29 Nov' : 'Casting Nov 28–29'}
+            </span>
+          </button>
+        </motion.div>
+      )}
+    </section>
+  );
+};
+
+export default function App() {
+  const { scrollY } = useScroll();
 
   // Transformaciones dinámicas de navbar y logo al hacer scroll
   const navBg = useTransform(
@@ -1160,11 +1322,19 @@ export default function App() {
       return null;
     }
   });
+  const [adminAccessToken, setAdminAccessToken] = useState<string>('');
+  const [authSessionWarning, setAuthSessionWarning] = useState<boolean>(false);
+  const sessionRef = useRef<any>(session);
+  const isExplicitLogoutRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession()
+    getSessionSingleFlight()
       .then(({ data: { session: authSession } }) => {
         if (!active) return;
         if (authSession?.user) {
@@ -1174,23 +1344,38 @@ export default function App() {
             userId: authSession.user.id,
           };
           setSession(nextSession);
+          setAdminAccessToken(authSession.access_token || '');
+          setAuthSessionWarning(false);
           localStorage.setItem('adminSession', JSON.stringify(nextSession));
+        } else if (sessionRef.current?.supabaseAuth) {
+          setAdminAccessToken('');
+          setAuthSessionWarning(true);
         }
       })
       .catch(() => {});
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, authSession) => {
       if (!active) return;
+      clearSessionCache();
       if (event === 'SIGNED_OUT') {
-        setSession(null);
-        localStorage.removeItem('adminSession');
-      } else if (authSession?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+        setAdminAccessToken('');
+        if (isExplicitLogoutRef.current || !sessionRef.current) {
+          setSession(null);
+          setAuthSessionWarning(false);
+          localStorage.removeItem('adminSession');
+        } else {
+          // Mantener abierto el panel con aviso visible para evitar cierres abruptos ante límites 429 o expiración
+          setAuthSessionWarning(true);
+        }
+      } else if (authSession?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION')) {
         const nextSession = {
           email: authSession.user.email || '',
           supabaseAuth: true,
           userId: authSession.user.id,
         };
         setSession(nextSession);
+        setAdminAccessToken(authSession.access_token || '');
+        setAuthSessionWarning(false);
         localStorage.setItem('adminSession', JSON.stringify(nextSession));
       }
     });
@@ -1202,7 +1387,7 @@ export default function App() {
   }, []);
 
   const [dbModels, setDbModels] = useState<Model[]>([]);
-  const [loadingModels, setLoadingModels] = useState<boolean>(true);
+  const [loadingModels, setLoadingModels] = useState<boolean>(!CASTING_ONLY_PREVIEW_MODE);
   const [modelsLoadError, setModelsLoadError] = useState<boolean>(false);
 
   const fetchPublicModels = async (forceRefresh = false) => {
@@ -1233,6 +1418,7 @@ export default function App() {
 
   // Real-time synchronization and auto-revalidation (focus, visibility, storage, and Supabase Realtime)
   useEffect(() => {
+    if (CASTING_ONLY_PREVIEW_MODE) return;
     let active = true;
 
     const refreshModelsNow = async (force: boolean = false) => {
@@ -1298,12 +1484,14 @@ export default function App() {
   }, [dbModels.length]);
 
   useEffect(() => {
+    if (CASTING_ONLY_PREVIEW_MODE) return;
     fetchPublicModels();
   }, [session]);
 
   const [publicBookings, setPublicBookings] = useState<any[]>([]);
 
   useEffect(() => {
+    if (CASTING_ONLY_PREVIEW_MODE) return;
     getCachedBookings()
       .then(data => {
         if (data && Array.isArray(data)) setPublicBookings(data);
@@ -1712,6 +1900,9 @@ export default function App() {
           supabaseAuth: true,
           userId: authData.user.id,
         };
+        clearSessionCache();
+        setAdminAccessToken(authData.session?.access_token || '');
+        setAuthSessionWarning(false);
         setSession(newSession);
         localStorage.setItem('adminSession', JSON.stringify(newSession));
         setShowManagerLogin(false);
@@ -1736,6 +1927,8 @@ export default function App() {
       }
 
       const fallbackSession = { email: data.email, supabaseAuth: false };
+      setAdminAccessToken('');
+      setAuthSessionWarning(false);
       setSession(fallbackSession);
       localStorage.setItem('adminSession', JSON.stringify(fallbackSession));
       setShowManagerLogin(false);
@@ -1755,16 +1948,24 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    isExplicitLogoutRef.current = true;
     try {
       await supabase.auth.signOut();
     } catch {
       // ignore signOut errors
-    }
-    invalidateModelsCache();
-    setSession(null);
-    localStorage.removeItem('adminSession');
-    if (typeof window !== 'undefined' && isAdminUrl()) {
-      window.history.replaceState({}, '', '/');
+    } finally {
+      clearSessionCache();
+      invalidateModelsCache();
+      setAdminAccessToken('');
+      setAuthSessionWarning(false);
+      setSession(null);
+      localStorage.removeItem('adminSession');
+      if (typeof window !== 'undefined' && isAdminUrl()) {
+        window.history.replaceState({}, '', '/');
+      }
+      window.setTimeout(() => {
+        isExplicitLogoutRef.current = false;
+      }, 250);
     }
   };
 
@@ -3082,7 +3283,17 @@ export default function App() {
   );
 
   if (session) {
-    return <ManagerDashboard onLogout={handleLogout} />;
+    return (
+      <>
+        <ManagerDashboard
+          onLogout={handleLogout}
+          initialAccessToken={adminAccessToken}
+          authSessionWarning={authSessionWarning}
+          onRequestRelogin={() => setShowManagerLogin(true)}
+        />
+        {managerLoginModal}
+      </>
+    );
   }
 
   if (currentView === 'casting') {
@@ -3208,141 +3419,14 @@ export default function App() {
           </span>
         </div>
       </motion.nav>
-          {/* HERO SECTION */}
-      <section 
-        id="hero-section" 
-        ref={heroRef}
-        className="relative h-[100dvh] min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden"
-      >
-        {/* Background Slideshow con efecto Ken Burns y desenfoque al scroll */}
-        <motion.div 
-          style={{ opacity: heroScrollOpacity, filter: heroScrollBlur }}
-          className="absolute inset-0 z-0 bg-[#0A0A0A] overflow-hidden pointer-events-none"
-        >
-          <AnimatePresence initial={false}>
-            <motion.div
-              key={currentHeroIdx}
-              initial={{ opacity: 0, filter: "blur(20px)" }}
-              animate={{ opacity: 0.25, filter: "blur(0px)" }}
-              exit={{ opacity: 0, filter: "blur(20px)" }}
-              transition={{ duration: 1.5, ease: "easeInOut" }}
-              className="absolute inset-0 w-full h-full"
-            >
-              <motion.img
-                src={HERO_IMAGES[currentHeroIdx]}
-                alt=""
-                className="w-full h-full object-cover origin-center grayscale contrast-[1.1] brightness-[0.7]"
-                initial={{ scale: 1.0, x: "-1%", y: "-1%" }}
-                animate={{ scale: 1.08, x: "1%", y: "1%" }}
-                transition={{ duration: 7, ease: "linear" }}
-              />
-            </motion.div>
-          </AnimatePresence>
-          {/* Degradados sutiles para mantener el contraste de texto óptimo */}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-[#0A0A0A]/80 z-10 pointer-events-none"></div>
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0A0A0A]/40 via-transparent to-[#0A0A0A]/40 z-10 pointer-events-none"></div>
-        </motion.div>
-        
-        {/* Rejilla decorativa estilizada */}
-        <motion.div 
-          style={{ opacity: heroScrollOpacity }}
-          className="absolute inset-0 pointer-events-none"
-        >
-          <div className="absolute inset-0 opacity-10 bg-[linear-gradient(rgba(204,0,0,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(204,0,0,0.08)_1px,transparent_1px)] bg-[size:60px_60px] z-10"></div>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-[#CC0000] opacity-[0.06] rounded-full filter blur-[100px] z-10"></div>
-        </motion.div>
-
-        <motion.div 
-          style={{ 
-            opacity: heroScrollOpacity, 
-            filter: heroScrollBlur,
-            scale: heroScrollScale,
-            y: heroScrollY
-          }}
-          className="relative z-10 text-center max-w-5xl px-4 flex flex-col items-center will-change-transform"
-        >
-          <h1 className="flex flex-col items-center justify-center leading-none text-center select-none mb-3 sm:mb-5">
-            {/* 'MODELOS' / 'MODELS' - Animación inicial palabra */}
-            <motion.span 
-              initial={{ opacity: 0, y: 25 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.9, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="font-condensed text-7xl sm:text-8xl md:text-9xl lg:text-[11rem] xl:text-[13rem] text-white leading-none tracking-wider uppercase block drop-shadow-[0_6px_28px_rgba(0,0,0,0.95)]"
-            >
-              {TRANSLATIONS[lang].models.toUpperCase()}
-            </motion.span>
-
-            {/* 'Planet' centrado alineado al medio */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20, rotate: -3 }}
-              animate={{ opacity: 1, y: 0, rotate: -2 }}
-              transition={{ duration: 0.8, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
-              className="inline-flex items-center justify-center -mt-3 sm:-mt-5 md:-mt-8 z-20"
-            >
-              <span className="font-brush text-5xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-9xl text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.95)] tracking-wide">
-                Planet
-              </span>
-            </motion.div>
-          </h1>
-          
-          {/* 'Catálogo Oficial · 2026' - Animación inicial subtítulo con acento de rojo de marca en el separador */}
-          <motion.p 
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.8, ease: [0.16, 1, 0.3, 1] }}
-            className="font-sans font-medium text-xs sm:text-sm md:text-base tracking-[0.2em] uppercase text-white/90 mt-5 sm:mt-7 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]"
-          >
-            {lang === 'es' ? (
-              <>Catálogo Oficial <span className="text-[#CC0000] font-bold">·</span> 2026</>
-            ) : (
-              <>Official Catalog <span className="text-[#CC0000] font-bold">·</span> 2026</>
-            )}
-          </motion.p>
-
-          {/* Botón Explorar integrado armónicamente */}
-          <motion.button 
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
-            onClick={() => {
-              const target = document.getElementById('featured-models-coverflow-section') || document.getElementById('filter-bar-container');
-              target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }}
-            title={lang === 'es' ? 'Ir a modelos destacadas y catálogo' : 'Go to featured models and catalog'}
-            className="mt-8 sm:mt-11 px-6 py-2.5 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 hover:border-white/30 text-white/75 hover:text-white text-[11px] font-semibold tracking-[0.25em] uppercase rounded-full cursor-pointer transition-all duration-300 shadow-sm z-20 flex items-center gap-2 group"
-          >
-            <span>{TRANSLATIONS[lang].explore}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-white/50 group-hover:text-white transition-transform duration-300 group-hover:translate-y-0.5" />
-          </motion.button>
-        </motion.div>
-
-        {/* Invitación discreta y sugerente anclada al pie del Hero sin interrumpir el centro visual */}
-        {castingActive && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.9, delay: 1.25, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute bottom-5 sm:bottom-8 inset-x-0 z-20 flex justify-center px-4 pointer-events-none"
-          >
-            <button
-              id="hero-casting-notice"
-              type="button"
-              onClick={openCastingPage}
-              className="pointer-events-auto group inline-flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 py-2 px-4 bg-black/65 hover:bg-black/80 backdrop-blur-md border border-white/15 hover:border-[#E2BA57]/45 rounded-sm text-[13px] sm:text-[15px] font-sans tracking-normal text-white/90 hover:text-white transition-all cursor-pointer shadow-lg"
-            >
-              <span className="italic text-white/85 group-hover:text-white transition-colors">
-                {lang === 'es'
-                  ? '¿Te imaginas en el próximo videoclip?'
-                  : 'Picture yourself in our next music video?'}
-              </span>
-              <span className="text-[#CC0000] font-bold" aria-hidden="true">·</span>
-              <span className="uppercase tracking-[0.04em] text-[13px] sm:text-[14px] font-semibold text-[#FCE99F] underline underline-offset-4 decoration-[#CC0000] group-hover:text-white">
-                {lang === 'es' ? 'Casting 28–29 Nov' : 'Casting Nov 28–29'}
-              </span>
-            </button>
-          </motion.div>
-        )}
-      </section>
+      {/* HERO SECTION */}
+      <CatalogHeroSection
+        lang={lang}
+        currentHeroIdx={currentHeroIdx}
+        heroImageSrc={HERO_IMAGES[currentHeroIdx]}
+        castingActive={castingActive}
+        openCastingPage={openCastingPage}
+      />
 
       {/* SECCIÓN MODELOS DESTACADAS (COVERFLOW CAROUSEL) */}
       <FeaturedModelsCoverflow 

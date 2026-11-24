@@ -562,49 +562,29 @@ export const CastingPage: React.FC<CastingPageProps> = ({
 
     setSubmitting(true);
     try {
-      // 1. Intentar guardar las 2 fotografías en el servidor local (/api/casting-photos).
-      let localPhotoId = `local-${Date.now()}`;
-      let localCaraUrl = '';
-      let localCuerpoUrl = '';
-
-      try {
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 5500);
-        const uploadRes = await fetch('/api/casting-photos', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            fotoCara,
-            fotoCuerpo,
-            correo: correo.trim().toLowerCase(),
-            instagram: normalizedIg,
-            whatsapp: whatsapp.trim(),
-            nombre: nombre.trim(),
-            apellidos: apellidos.trim(),
-            website: honeypot,
-          }),
-        });
-        window.clearTimeout(timeoutId);
-
-        const uploadData = await uploadRes.json().catch(() => ({}));
-        if (uploadRes.ok && uploadData?.fotoCaraUrl && uploadData?.fotoCuerpoUrl) {
-          localPhotoId = uploadData.id || localPhotoId;
-          localCaraUrl = uploadData.fotoCaraUrl;
-          localCuerpoUrl = uploadData.fotoCuerpoUrl;
+      // 1. Comprimir las 2 fotografías a Data URL compacto (WebP/JPEG) para guardarlas de forma
+      // permanente en Supabase (protegido por RLS) sin depender de disco local ni fallar en Vercel.
+      const localPhotoId = `inline-${Date.now()}`;
+      const compressForDb = async (src: string, maxW: number, maxH: number) => {
+        const firstPass = await compressDataUrl(src, {
+          maxWidth: maxW,
+          maxHeight: maxH,
+          quality: 0.72,
+        }).catch(() => src);
+        if (firstPass.length > 220_000) {
+          return compressDataUrl(firstPass, {
+            maxWidth: Math.round(maxW * 0.8),
+            maxHeight: Math.round(maxH * 0.8),
+            quality: 0.58,
+          }).catch(() => firstPass);
         }
-      } catch {
-        // Servidor local no disponible o caída temporal de red: continuar con respaldo compacto
-      }
+        return firstPass;
+      };
 
-      if (!localCaraUrl || !localCuerpoUrl) {
-        const [compactCara, compactCuerpo] = await Promise.all([
-          compressDataUrl(fotoCara, { maxWidth: 640, maxHeight: 850, quality: 0.72 }).catch(() => fotoCara),
-          compressDataUrl(fotoCuerpo, { maxWidth: 640, maxHeight: 900, quality: 0.72 }).catch(() => fotoCuerpo),
-        ]);
-        localCaraUrl = compactCara;
-        localCuerpoUrl = compactCuerpo;
-      }
+      const [localCaraUrl, localCuerpoUrl] = await Promise.all([
+        compressForDb(fotoCara, 640, 850),
+        compressForDb(fotoCuerpo, 640, 900),
+      ]);
 
       saveLocalSubmittedCastingPhotos({
         id: localPhotoId,

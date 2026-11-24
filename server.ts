@@ -369,7 +369,7 @@ async function startServer() {
     }
     try {
       const records = await withPhotoIndexLock(async () => readPhotoIndex());
-      return res.status(200).json({ records });
+      return res.status(200).json({ ok: true, localStorageAvailable: true, records });
     } catch (err) {
       console.error("Error reading casting photo index:", err);
       return res.status(500).json({ error: "Error leyendo índice de fotos locales." });
@@ -668,7 +668,7 @@ async function startServer() {
 
   // Health check endpoint
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", castingPhotoStorage: "local" });
   });
 
   // API Route to send Telegram notification for new bookings

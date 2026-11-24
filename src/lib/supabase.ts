@@ -6,10 +6,126 @@ const supabaseAnonKey = (viteEnv.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
+const REFRESH_COOLDOWN_DEFAULT_MS = 60_000;
+let refreshCooldownUntil = 0;
+let inFlightRefresh: { key: string; promise: Promise<Response> } | null = null;
+
+function makeSyntheticRetryableResponse(message: string): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'temporarily_unavailable',
+      message,
+    }),
+    {
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+}
+
+const rateLimitSafeFetch: typeof fetch = async (input, init) => {
+  const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const isRefreshTokenCall =
+    urlStr.includes('/auth/v1/token') && urlStr.includes('grant_type=refresh_token');
+
+  if (!isRefreshTokenCall) {
+    return fetch(input, init);
+  }
+
+  const now = Date.now();
+  if (now < refreshCooldownUntil) {
+    return makeSyntheticRetryableResponse('Auth refresh cooldown active after rate limit');
+  }
+
+  const bodyKey = typeof init?.body === 'string' ? init.body : '';
+  const dedupeKey = `${urlStr}|${bodyKey}`;
+
+  if (inFlightRefresh && inFlightRefresh.key === dedupeKey) {
+    const sharedRes = await inFlightRefresh.promise;
+    return sharedRes.clone();
+  }
+
+  const fetchPromise = (async () => {
+    const response = await fetch(input, init);
+    if (response.status === 429) {
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retrySeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+      const cooldownMs =
+        Number.isFinite(retrySeconds) && retrySeconds > 0
+          ? Math.min(Math.max(retrySeconds * 1000, 15_000), 300_000)
+          : REFRESH_COOLDOWN_DEFAULT_MS;
+      refreshCooldownUntil = Date.now() + cooldownMs;
+      // Return 503 so @supabase/auth-js treats 429 as AuthRetryableFetchError
+      // instead of clearing the user's local session and emitting SIGNED_OUT.
+      return makeSyntheticRetryableResponse('Rate limit 429 converted to retryable pause');
+    }
+    return response;
+  })();
+
+  inFlightRefresh = { key: dedupeKey, promise: fetchPromise };
+  try {
+    const result = await fetchPromise;
+    return result.clone();
+  } finally {
+    if (inFlightRefresh?.promise === fetchPromise) {
+      inFlightRefresh = null;
+    }
+  }
+};
+
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-anon-key'
+  supabaseAnonKey || 'placeholder-anon-key',
+  {
+    global: {
+      fetch: rateLimitSafeFetch,
+    },
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
+  }
 );
+
+type SessionResult = Awaited<ReturnType<typeof supabase.auth.getSession>>;
+const SESSION_CACHE_TTL_MS = 4_000;
+let cachedSessionResult: { data: SessionResult; fetchedAt: number } | null = null;
+let inFlightSessionPromise: Promise<SessionResult> | null = null;
+
+export const clearSessionCache = () => {
+  cachedSessionResult = null;
+};
+
+export const getSessionSingleFlight = async (forceRefresh = false): Promise<SessionResult> => {
+  if (
+    !forceRefresh &&
+    cachedSessionResult &&
+    Date.now() - cachedSessionResult.fetchedAt < SESSION_CACHE_TTL_MS
+  ) {
+    return cachedSessionResult.data;
+  }
+
+  if (inFlightSessionPromise) {
+    return inFlightSessionPromise;
+  }
+
+  const pending = supabase.auth
+    .getSession()
+    .then((res) => {
+      cachedSessionResult = { data: res, fetchedAt: Date.now() };
+      return res;
+    })
+    .finally(() => {
+      if (inFlightSessionPromise === pending) {
+        inFlightSessionPromise = null;
+      }
+    });
+
+  inFlightSessionPromise = pending;
+  return pending;
+};
 
 // Caché global en memoria
 let memoryModelsCache: any[] | null = null;

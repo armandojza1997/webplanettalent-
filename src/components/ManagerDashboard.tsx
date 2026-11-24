@@ -1,7 +1,14 @@
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef } from 'react';
 import { toast, Toaster } from 'sonner';
-import { supabase, getCachedModels, getCachedBookings, invalidateModelsCache, invalidateBookingsCache } from '../lib/supabase';
+import {
+  supabase,
+  getSessionSingleFlight,
+  getCachedModels,
+  getCachedBookings,
+  invalidateModelsCache,
+  invalidateBookingsCache,
+} from '../lib/supabase';
 import { CastingApplication, CastingApplicationStatus, Model } from '../types';
 import { 
   Trash2, 
@@ -94,56 +101,88 @@ import {
 } from '../lib/castingCsvNormalizer';
 
 const protectedPhotoBlobCache = new Map<string, string>();
+const failedProtectedPhotoUrls = new Set<string>();
 
 const ProtectedCastingPhoto: React.FC<{
   src: string;
   alt: string;
   className?: string;
   accessToken?: string;
-}> = ({ src, alt, className, accessToken }) => {
+  canFetchServerPhoto?: boolean;
+  fallbackLabel?: string;
+}> = ({ src, alt, className, accessToken, canFetchServerPhoto = true, fallbackLabel }) => {
   const needsAuthFetch = src.startsWith('/api/casting-photos/');
+  const isKnownUnavailable =
+    needsAuthFetch &&
+    (!canFetchServerPhoto || failedProtectedPhotoUrls.has(src));
+
   const [resolvedSrc, setResolvedSrc] = useState<string>(() => {
     if (!needsAuthFetch) return src;
     return protectedPhotoBlobCache.get(src) || '';
   });
+  const [unavailable, setUnavailable] = useState<boolean>(isKnownUnavailable);
 
   useEffect(() => {
     if (!needsAuthFetch) {
       setResolvedSrc(src);
+      setUnavailable(false);
       return;
     }
     const cached = protectedPhotoBlobCache.get(src);
     if (cached) {
       setResolvedSrc(cached);
+      setUnavailable(false);
       return;
     }
+    if (!canFetchServerPhoto || failedProtectedPhotoUrls.has(src) || !accessToken) {
+      setUnavailable(true);
+      return;
+    }
+
     let cancelled = false;
+    setUnavailable(false);
     (async () => {
       try {
-        let token = accessToken;
-        if (!token) {
-          const { data: { session } } = await supabase.auth.getSession();
-          token = session?.access_token;
-        }
-        if (!token) return;
         const res = await fetch(src, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${accessToken}` },
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          failedProtectedPhotoUrls.add(src);
+          if (!cancelled) setUnavailable(true);
+          return;
+        }
         const blob = await res.blob();
         const objectUrl = URL.createObjectURL(blob);
         protectedPhotoBlobCache.set(src, objectUrl);
         if (!cancelled) {
           setResolvedSrc(objectUrl);
+          setUnavailable(false);
         }
       } catch {
-        // ignore image fetch failure
+        failedProtectedPhotoUrls.add(src);
+        if (!cancelled) setUnavailable(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [src, needsAuthFetch, accessToken]);
+  }, [src, needsAuthFetch, accessToken, canFetchServerPhoto]);
+
+  if (unavailable || isKnownUnavailable) {
+    return (
+      <div
+        className="w-full h-full flex flex-col items-center justify-center bg-zinc-900/90 text-zinc-400 p-1 text-center"
+        title="Fotografía no disponible en este despliegue (almacenada temporalmente en el servidor anterior)"
+      >
+        <ImageOff className="w-4 h-4 text-zinc-500 mb-0.5 shrink-0" />
+        {fallbackLabel && (
+          <span className="text-[10px] leading-tight text-zinc-400 font-medium px-1">
+            {fallbackLabel}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   if (!resolvedSrc) {
     return (
@@ -240,9 +279,17 @@ const playBookingNotificationSound = () => {
 
 interface ManagerDashboardProps {
   onLogout: () => void;
+  initialAccessToken?: string;
+  authSessionWarning?: boolean;
+  onRequestRelogin?: () => void;
 }
 
-export function ManagerDashboard({ onLogout }: ManagerDashboardProps) {
+export function ManagerDashboard({
+  onLogout,
+  initialAccessToken = '',
+  authSessionWarning = false,
+  onRequestRelogin,
+}: ManagerDashboardProps) {
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(!CASTING_ONLY_PREVIEW_MODE);
   const [modelsError, setModelsError] = useState<string>('');
@@ -263,7 +310,9 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps) {
 
   // Casting Tab State
   const [castingApplications, setCastingApplications] = useState<CastingApplication[]>([]);
-  const [castingAccessToken, setCastingAccessToken] = useState<string>('');
+  const [castingAccessToken, setCastingAccessToken] = useState<string>(initialAccessToken);
+  const [serverPhotoStorageAvailable, setServerPhotoStorageAvailable] = useState<boolean>(false);
+  const [availableServerPhotoUrls, setAvailableServerPhotoUrls] = useState<Set<string>>(new Set());
   const [loadingCasting, setLoadingCasting] = useState<boolean>(false);
   const [castingError, setCastingError] = useState<string>('');
   const [castingStatusFilter, setCastingStatusFilter] = useState<'all' | CastingApplicationStatus>('all');
@@ -305,8 +354,11 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps) {
   const checkGoogleFormWebhookStatus = async () => {
     setWebhookStatus({ loading: true });
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      let accessToken = castingAccessToken || initialAccessToken;
+      if (!accessToken) {
+        const { data: sessionData } = await getSessionSingleFlight();
+        accessToken = sessionData?.session?.access_token || '';
+      }
       if (!accessToken) {
         setWebhookStatus({ loading: false, error: 'Inicia sesión para verificar el servidor.' });
         return;
@@ -314,7 +366,8 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps) {
       const res = await fetch('/api/webhooks/google-form/status', {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (!res.ok) {
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok || !ct.includes('application/json')) {
         setWebhookStatus({ loading: false, error: `Error consultando estado (${res.status}).` });
         return;
       }
@@ -701,14 +754,23 @@ function syncAllExistingRows() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!initialAccessToken) return;
+    setCastingAccessToken(initialAccessToken);
+    if (castingApplications.length === 0 || castingError) {
+      fetchCastingApplications(false);
+    }
+  }, [initialAccessToken]);
+
   const fetchCastingApplications = async (silent = false) => {
     if (!silent) {
       setLoadingCasting(true);
     }
     setCastingError('');
     try {
-      const { data: { session: authSession } } = await supabase.auth.getSession();
-      if (!authSession) {
+      const { data: { session: authSession } } = await getSessionSingleFlight();
+      const activeToken = authSession?.access_token || initialAccessToken;
+      if (!activeToken) {
         setCastingAccessToken('');
         setCastingApplications([]);
         setCastingError(
@@ -717,7 +779,7 @@ function syncAllExistingRows() {
         return;
       }
 
-      setCastingAccessToken(authSession.access_token);
+      setCastingAccessToken(activeToken);
 
       const [{ data, error }, serverIndexRes] = await Promise.all([
         supabase
@@ -725,10 +787,16 @@ function syncAllExistingRows() {
           .select('*')
           .order('created_at', { ascending: false }),
         fetch('/api/casting-photos/index', {
-          headers: { Authorization: `Bearer ${authSession.access_token}` },
+          headers: { Authorization: `Bearer ${activeToken}` },
         })
-          .then((r) => (r.ok ? r.json() : { records: [] }))
-          .catch(() => ({ records: [] })),
+          .then(async (r) => {
+            const ct = r.headers.get('content-type') || '';
+            if (!r.ok || !ct.includes('application/json')) {
+              return { ok: false, localStorageAvailable: false, records: [] };
+            }
+            return r.json();
+          })
+          .catch(() => ({ ok: false, localStorageAvailable: false, records: [] })),
       ]);
 
       if (error) throw error;
@@ -736,11 +804,24 @@ function syncAllExistingRows() {
       const serverRecords: LocalCastingPhotoRecord[] = Array.isArray(serverIndexRes?.records)
         ? serverIndexRes.records
         : [];
+      const localDiskAvailable =
+        serverIndexRes?.ok === true && serverIndexRes?.localStorageAvailable !== false;
+
+      const serverUrls = new Set<string>();
+      if (localDiskAvailable) {
+        for (const rec of serverRecords) {
+          if (rec?.fotoCaraUrl) serverUrls.add(rec.fotoCaraUrl);
+          if (rec?.fotoCuerpoUrl) serverUrls.add(rec.fotoCuerpoUrl);
+        }
+      }
+      setServerPhotoStorageAvailable(localDiskAvailable);
+      setAvailableServerPhotoUrls(serverUrls);
+
       const browserLocalRecords = getLocalSubmittedCastingPhotos();
       const combinedPhotoRecords = [...serverRecords, ...browserLocalRecords];
 
       const enriched = ((data as CastingApplication[]) || []).map((app) => {
-        const matched = matchLocalPhotosToApplication(app, combinedPhotoRecords);
+        const matched = matchLocalPhotosToApplication(app, combinedPhotoRecords, serverUrls);
         return {
           ...app,
           foto_cara: matched.fotoCara || app.foto_cara || '',
@@ -796,15 +877,19 @@ function syncAllExistingRows() {
 
       if (error) throw error;
 
-      if (targetApp) {
+      if (targetApp && serverPhotoStorageAvailable) {
         try {
-          const { data: { session: authSession } } = await supabase.auth.getSession();
-          if (authSession?.access_token) {
+          let token = castingAccessToken;
+          if (!token) {
+            const { data: { session: authSession } } = await getSessionSingleFlight();
+            token = authSession?.access_token || '';
+          }
+          if (token) {
             await fetch('/api/casting-photos', {
               method: 'DELETE',
               headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${authSession.access_token}`,
+                Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify({
                 correo: targetApp.correo,
@@ -2292,6 +2377,39 @@ function syncAllExistingRows() {
       </header>
 
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 relative z-10 flex-1">
+        {authSessionWarning && (
+          <div className="mb-5 bg-amber-950/60 border border-amber-500/40 rounded-sm p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-xs text-amber-100">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-200">
+                  La renovación automática de sesión fue pausada temporalmente o expiró.
+                </p>
+                <p className="text-amber-100/80 mt-0.5">
+                  El panel permanece abierto para que no pierdas tu trabajo. Si alguna consulta falla, vuelve a iniciar sesión.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {onRequestRelogin && (
+                <button
+                  type="button"
+                  onClick={onRequestRelogin}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold uppercase tracking-wider rounded-sm cursor-pointer transition-colors"
+                >
+                  Reingresar
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-medium rounded-sm cursor-pointer transition-colors"
+              >
+                Salir
+              </button>
+            </div>
+          </div>
+        )}
         
         {/* HERO TITLE & CONTEXT */}
         <div className="mb-6 sm:mb-8">
@@ -3981,6 +4099,10 @@ function syncAllExistingRows() {
                                     alt={app.nombre}
                                     className="w-full h-full object-cover"
                                     accessToken={castingAccessToken}
+                                    canFetchServerPhoto={
+                                      serverPhotoStorageAvailable &&
+                                      availableServerPhotoUrls.has(app.foto_cara)
+                                    }
                                   />
                                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                     <Eye className="w-4 h-4 text-white" />
@@ -5930,6 +6052,11 @@ function syncAllExistingRows() {
                         alt="Cara"
                         className="w-full h-full object-contain"
                         accessToken={castingAccessToken}
+                        canFetchServerPhoto={
+                          serverPhotoStorageAvailable &&
+                          availableServerPhotoUrls.has(previewCastingPhotos.cara)
+                        }
+                        fallbackLabel="Guardada en almacenamiento local del servidor anterior (no disponible en Vercel)"
                       />
                     ) : (
                       <span className="text-xs text-zinc-500">Sin foto de cara</span>
@@ -5946,6 +6073,11 @@ function syncAllExistingRows() {
                         alt="Cuerpo"
                         className="w-full h-full object-contain"
                         accessToken={castingAccessToken}
+                        canFetchServerPhoto={
+                          serverPhotoStorageAvailable &&
+                          availableServerPhotoUrls.has(previewCastingPhotos.cuerpo)
+                        }
+                        fallbackLabel="Guardada en almacenamiento local del servidor anterior (no disponible en Vercel)"
                       />
                     ) : (
                       <span className="text-xs text-zinc-500">Sin foto de cuerpo</span>
