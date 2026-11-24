@@ -2494,7 +2494,7 @@ function syncAllExistingRows() {
               loading="lazy" 
               src="/logo header.PNG" 
               alt="Planet Talent" 
-              className="h-32 sm:h-44 md:h-56 w-auto object-contain shrink-0 py-1 drop-shadow-sm" 
+              className="h-9 sm:h-11 md:h-12 w-auto object-contain shrink-0 py-1 drop-shadow-sm" 
             />
             
             <div className="h-4 w-px bg-white/20 hidden sm:block shrink-0"></div>

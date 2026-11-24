@@ -766,7 +766,7 @@ export const CastingPage: React.FC<CastingPageProps> = ({
           <img
             src="/logo header.PNG"
             alt="Planet Talent"
-            className="h-24 sm:h-36 w-auto object-contain shrink-0 py-1"
+            className="h-7 sm:h-9 w-auto object-contain shrink-0 py-0.5"
           />
 
           <div className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/15 rounded-full text-[0.6875rem] shrink-0">
