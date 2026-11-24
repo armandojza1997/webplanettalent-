@@ -1,4 +1,4 @@
-const CACHE_NAME = 'planet-talent-casting-v46';
+const CACHE_NAME = 'planet-talent-casting-v48';
 const OFFLINE_URL = '/';
 const CASTING_URL = '/casting';
 const CASTING_VIDEO_PATH = '/assets/aistudio/Casting_Planet_2c988d68.mp4';
@@ -10,6 +10,7 @@ const CORE_ASSETS = [
   '/manifest-casting.json',
   '/favicon.svg',
   '/favicon.png',
+  '/logo header.PNG',
   '/Logo de Planet Talent.PNG',
   '/logo_planet_talent.png',
   '/apple-touch-icon.png',
