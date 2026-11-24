@@ -3971,11 +3971,36 @@ function syncAllExistingRows() {
 
               {/* Contenido Principal */}
               {loadingCasting ? (
-                <div className="flex flex-col justify-center items-center py-24 gap-4">
-                  <Loader2 className="w-10 h-10 text-[#CC0000] animate-spin" />
-                  <p className="text-xs uppercase tracking-widest text-zinc-300">
-                    Cargando postulaciones...
-                  </p>
+                <div className="space-y-4">
+                  {[1, 2, 3, 4].map((n) => (
+                    <div
+                      key={n}
+                      className="bg-[#0C0C0E] border border-white/10 rounded-sm p-4 sm:p-5 space-y-4 animate-pulse"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div className="flex items-start gap-3.5 min-w-0">
+                          <div className="w-14 h-16 rounded-sm bg-white/10 border border-white/15 shrink-0" />
+                          <div className="space-y-2 py-1 flex-1">
+                            <div className="h-4 bg-white/15 rounded-sm w-48 max-w-full" />
+                            <div className="h-3 bg-white/10 rounded-sm w-64 max-w-full" />
+                            <div className="h-3 bg-white/5 rounded-sm w-36 max-w-full" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="h-7 w-24 bg-white/10 rounded-sm" />
+                          <div className="h-7 w-24 bg-white/10 rounded-sm" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-white/5">
+                        <div className="h-3 w-40 bg-white/10 rounded-sm" />
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <div className="h-7 w-20 bg-white/10 rounded-sm" />
+                          <div className="h-7 w-24 bg-white/10 rounded-sm" />
+                          <div className="h-7 w-24 bg-white/10 rounded-sm" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : castingError ? (
                 <div className="bg-red-950/20 border border-red-500/20 rounded-sm p-6 sm:p-8 text-center max-w-2xl mx-auto space-y-3">
