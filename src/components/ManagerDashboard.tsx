@@ -103,6 +103,11 @@ import {
 const protectedPhotoBlobCache = new Map<string, string>();
 const failedProtectedPhotoUrls = new Set<string>();
 
+const CASTING_LIGHTWEIGHT_COLUMNS =
+  'id,nombre,apellidos,fecha_nacimiento,edad,ciudad,whatsapp,correo,instagram,estatura,busto,cintura,caderas,talla_superior,talla_inferior,calzado,color_cabello,largo_cabello,color_ojos,tono_piel,tiene_piercings,tiene_tatuajes,detalle_piercings_tatuajes,origen,talento,genero,formacion_artistica,nivel_ensenanza,nombre_artistico,estado_cabello,tiktok,notas_importacion,datos_incompletos,campos_faltantes,estado,created_at';
+const CASTING_MINIMAL_COLUMNS =
+  'id,nombre,apellidos,fecha_nacimiento,edad,ciudad,whatsapp,correo,instagram,estatura,busto,cintura,caderas,talla_superior,talla_inferior,calzado,color_cabello,largo_cabello,color_ojos,tono_piel,tiene_piercings,tiene_tatuajes,detalle_piercings_tatuajes,estado,created_at';
+
 const ProtectedCastingPhoto: React.FC<{
   src: string;
   alt: string;
@@ -314,7 +319,10 @@ export function ManagerDashboard({
   const [serverPhotoStorageAvailable, setServerPhotoStorageAvailable] = useState<boolean>(false);
   const [availableServerPhotoUrls, setAvailableServerPhotoUrls] = useState<Set<string>>(new Set());
   const [loadingCasting, setLoadingCasting] = useState<boolean>(false);
+  const [loadingCastingPhotos, setLoadingCastingPhotos] = useState<boolean>(false);
   const [castingError, setCastingError] = useState<string>('');
+  const castingFetchPromiseRef = useRef<Promise<void> | null>(null);
+  const castingFetchGenRef = useRef<number>(0);
   const [castingStatusFilter, setCastingStatusFilter] = useState<'all' | CastingApplicationStatus>('all');
   const [castingTalentFilter, setCastingTalentFilter] = useState<'all' | 'modelo' | 'bailarin'>('all');
   const [castingOriginFilter, setCastingOriginFilter] = useState<'all' | 'web' | 'google_form' | 'missing_photos' | 'incomplete'>('all');
@@ -738,7 +746,7 @@ function syncAllExistingRows() {
   };
 
   useEffect(() => {
-    fetchCastingApplications(false);
+    fetchCastingApplications(false, false);
     if (CASTING_ONLY_PREVIEW_MODE) {
       return;
     }
@@ -757,89 +765,245 @@ function syncAllExistingRows() {
   useEffect(() => {
     if (!initialAccessToken) return;
     setCastingAccessToken(initialAccessToken);
-    if (castingApplications.length === 0 || castingError) {
-      fetchCastingApplications(false);
+    if (!castingFetchPromiseRef.current && (castingApplications.length === 0 || castingError)) {
+      fetchCastingApplications(false, false);
     }
   }, [initialAccessToken]);
 
-  const fetchCastingApplications = async (silent = false) => {
-    if (!silent) {
-      setLoadingCasting(true);
+  const loadCastingPhotosInBatches = async (
+    gen: number,
+    totalRows: number,
+    combinedPhotoRecords: LocalCastingPhotoRecord[],
+    serverUrls: Set<string>
+  ) => {
+    if (totalRows <= 0) {
+      setLoadingCastingPhotos(false);
+      return;
     }
-    setCastingError('');
+    setLoadingCastingPhotos(true);
+    let offset = 0;
+    let batchSize = 12;
+
     try {
-      const { data: { session: authSession } } = await getSessionSingleFlight();
-      const activeToken = authSession?.access_token || initialAccessToken;
-      if (!activeToken) {
-        setCastingAccessToken('');
-        setCastingApplications([]);
-        setCastingError(
-          'Debes iniciar sesión con un usuario administrador de Supabase Auth (Authentication → Users) para leer las postulaciones protegidas por RLS.'
-        );
-        return;
-      }
+      while (offset < totalRows) {
+        if (castingFetchGenRef.current !== gen) return;
 
-      setCastingAccessToken(activeToken);
-
-      const [{ data, error }, serverIndexRes] = await Promise.all([
-        supabase
+        const { data: photoRows, error: photoError } = await supabase
           .from('casting_applications')
-          .select('*')
-          .order('created_at', { ascending: false }),
-        fetch('/api/casting-photos/index', {
-          headers: { Authorization: `Bearer ${activeToken}` },
-        })
-          .then(async (r) => {
-            const ct = r.headers.get('content-type') || '';
-            if (!r.ok || !ct.includes('application/json')) {
-              return { ok: false, localStorageAvailable: false, records: [] };
-            }
-            return r.json();
+          .select('id,foto_cara,foto_cuerpo')
+          .order('id', { ascending: false })
+          .range(offset, offset + batchSize - 1);
+
+        if (castingFetchGenRef.current !== gen) return;
+
+        if (photoError) {
+          const isTimeoutOrHeavy =
+            photoError.code === '57014' ||
+            /statement timeout|canceling statement|timeout/i.test(photoError.message || '');
+          if (isTimeoutOrHeavy && batchSize > 1) {
+            batchSize = Math.max(1, Math.floor(batchSize / 3));
+            continue;
+          }
+          if (batchSize === 1) {
+            // Skip single oversized/failing row instead of blocking remaining rows
+            offset += 1;
+            continue;
+          }
+          break;
+        }
+
+        const rows = (photoRows as Array<{ id: number; foto_cara?: string | null; foto_cuerpo?: string | null }>) || [];
+        if (rows.length === 0) break;
+
+        const photoMap = new Map<number, { foto_cara?: string | null; foto_cuerpo?: string | null }>();
+        for (const r of rows) {
+          photoMap.set(r.id, r);
+        }
+
+        setCastingApplications((prev) =>
+          prev.map((app) => {
+            const p = photoMap.get(app.id);
+            if (!p) return app;
+            const mergedInput: CastingApplication = {
+              ...app,
+              foto_cara: p.foto_cara || app.foto_cara || '',
+              foto_cuerpo: p.foto_cuerpo || app.foto_cuerpo || '',
+            };
+            const matched = matchLocalPhotosToApplication(mergedInput, combinedPhotoRecords, serverUrls);
+            return {
+              ...mergedInput,
+              foto_cara: matched.fotoCara || mergedInput.foto_cara || '',
+              foto_cuerpo: matched.fotoCuerpo || mergedInput.foto_cuerpo || '',
+            };
           })
-          .catch(() => ({ ok: false, localStorageAvailable: false, records: [] })),
-      ]);
+        );
 
-      if (error) throw error;
+        offset += rows.length;
+        if (rows.length < batchSize) break;
+      }
+    } catch (err) {
+      console.warn('Background casting photo hydration paused:', err);
+    } finally {
+      if (castingFetchGenRef.current === gen) {
+        setLoadingCastingPhotos(false);
+      }
+    }
+  };
 
-      const serverRecords: LocalCastingPhotoRecord[] = Array.isArray(serverIndexRes?.records)
-        ? serverIndexRes.records
-        : [];
-      const localDiskAvailable =
-        serverIndexRes?.ok === true && serverIndexRes?.localStorageAvailable !== false;
+  const openCastingPhotoPreview = async (app: CastingApplication) => {
+    setPreviewCastingPhotos({
+      cara: app.foto_cara || '',
+      cuerpo: app.foto_cuerpo || app.foto_cara || '',
+      nombre: `${app.nombre} ${app.apellidos}`,
+    });
+    if (!loadingCastingPhotos || (app.foto_cara && app.foto_cuerpo)) return;
 
-      const serverUrls = new Set<string>();
-      if (localDiskAvailable) {
-        for (const rec of serverRecords) {
-          if (rec?.fotoCaraUrl) serverUrls.add(rec.fotoCaraUrl);
-          if (rec?.fotoCuerpoUrl) serverUrls.add(rec.fotoCuerpoUrl);
+    try {
+      const { data } = await supabase
+        .from('casting_applications')
+        .select('id,foto_cara,foto_cuerpo')
+        .eq('id', app.id)
+        .maybeSingle();
+      if (data) {
+        const cara = data.foto_cara || app.foto_cara || '';
+        const cuerpo = data.foto_cuerpo || app.foto_cuerpo || cara;
+        setPreviewCastingPhotos((prev) =>
+          prev && prev.nombre === `${app.nombre} ${app.apellidos}`
+            ? { ...prev, cara, cuerpo }
+            : prev
+        );
+        setCastingApplications((prev) =>
+          prev.map((item) =>
+            item.id === app.id
+              ? { ...item, foto_cara: cara, foto_cuerpo: data.foto_cuerpo || item.foto_cuerpo || '' }
+              : item
+          )
+        );
+      }
+    } catch {
+      // ignore on-demand hydration error
+    }
+  };
+
+  const fetchCastingApplications = async (silent = false, force = true) => {
+    if (!force && castingFetchPromiseRef.current) {
+      return castingFetchPromiseRef.current;
+    }
+
+    const gen = ++castingFetchGenRef.current;
+
+    const run = async () => {
+      if (!silent) {
+        setLoadingCasting(true);
+      }
+      setCastingError('');
+      try {
+        const { data: { session: authSession } } = await getSessionSingleFlight();
+        if (castingFetchGenRef.current !== gen) return;
+
+        const activeToken = authSession?.access_token || initialAccessToken;
+        if (!activeToken) {
+          setCastingAccessToken('');
+          setCastingApplications([]);
+          setCastingError(
+            'Debes iniciar sesión con un usuario administrador de Supabase Auth (Authentication → Users) para leer las postulaciones protegidas por RLS.'
+          );
+          return;
+        }
+
+        setCastingAccessToken(activeToken);
+
+        const fetchAllLightweightMetadata = async (): Promise<CastingApplication[]> => {
+          const PAGE_SIZE = 500;
+          const allRows: CastingApplication[] = [];
+          let from = 0;
+
+          while (true) {
+            const { data, error } = await supabase
+              .from('casting_applications')
+              .select('id,nombre,apellidos,fecha_nacimiento,edad,ciudad,whatsapp,correo,instagram,estatura,origen,talento,estado,created_at')
+              .order('id', { ascending: false })
+              .range(from, from + PAGE_SIZE - 1);
+
+            if (error) throw error;
+
+            const pageRows = (data as unknown as CastingApplication[]) || [];
+            allRows.push(...pageRows);
+            if (pageRows.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+          }
+
+          return allRows;
+        };
+
+        const [metadataRows, serverIndexRes] = await Promise.all([
+          fetchAllLightweightMetadata(),
+          fetch('/api/casting-photos/index', {
+            headers: { Authorization: `Bearer ${activeToken}` },
+          })
+            .then(async (r) => {
+              const ct = r.headers.get('content-type') || '';
+              if (!r.ok || !ct.includes('application/json')) {
+                return { ok: false, localStorageAvailable: false, records: [] };
+              }
+              return r.json();
+            })
+            .catch(() => ({ ok: false, localStorageAvailable: false, records: [] })),
+        ]);
+
+        if (castingFetchGenRef.current !== gen) return;
+
+        const serverRecords: LocalCastingPhotoRecord[] = Array.isArray(serverIndexRes?.records)
+          ? serverIndexRes.records
+          : [];
+        const localDiskAvailable =
+          serverIndexRes?.ok === true && serverIndexRes?.localStorageAvailable !== false;
+
+        const serverUrls = new Set<string>();
+        if (localDiskAvailable) {
+          for (const rec of serverRecords) {
+            if (rec?.fotoCaraUrl) serverUrls.add(rec.fotoCaraUrl);
+            if (rec?.fotoCuerpoUrl) serverUrls.add(rec.fotoCuerpoUrl);
+          }
+        }
+        setServerPhotoStorageAvailable(localDiskAvailable);
+        setAvailableServerPhotoUrls(serverUrls);
+
+        const browserLocalRecords = getLocalSubmittedCastingPhotos();
+        const combinedPhotoRecords = [...serverRecords, ...browserLocalRecords];
+
+        const enriched = metadataRows.map((app) => {
+          const matched = matchLocalPhotosToApplication(app, combinedPhotoRecords, serverUrls);
+          return {
+            ...app,
+            foto_cara: matched.fotoCara || app.foto_cara || '',
+            foto_cuerpo: matched.fotoCuerpo || app.foto_cuerpo || '',
+          };
+        });
+
+        setCastingApplications(enriched);
+
+        // Stream base64 photos progressively in small adaptive batches so Postgres never times out
+        void loadCastingPhotosInBatches(gen, enriched.length, combinedPhotoRecords, serverUrls);
+      } catch (err: any) {
+        if (castingFetchGenRef.current !== gen) return;
+        console.error('Error fetching casting applications:', err);
+        setCastingError(
+          err?.message || 'No se pudieron cargar las postulaciones de casting.'
+        );
+      } finally {
+        if (castingFetchGenRef.current === gen && !silent) {
+          setLoadingCasting(false);
+        }
+        if (castingFetchPromiseRef.current === currentPromise) {
+          castingFetchPromiseRef.current = null;
         }
       }
-      setServerPhotoStorageAvailable(localDiskAvailable);
-      setAvailableServerPhotoUrls(serverUrls);
+    };
 
-      const browserLocalRecords = getLocalSubmittedCastingPhotos();
-      const combinedPhotoRecords = [...serverRecords, ...browserLocalRecords];
-
-      const enriched = ((data as CastingApplication[]) || []).map((app) => {
-        const matched = matchLocalPhotosToApplication(app, combinedPhotoRecords, serverUrls);
-        return {
-          ...app,
-          foto_cara: matched.fotoCara || app.foto_cara || '',
-          foto_cuerpo: matched.fotoCuerpo || app.foto_cuerpo || '',
-        };
-      });
-
-      setCastingApplications(enriched);
-    } catch (err: any) {
-      console.error('Error fetching casting applications:', err);
-      setCastingError(
-        err?.message || 'No se pudieron cargar las postulaciones de casting.'
-      );
-    } finally {
-      if (!silent) {
-        setLoadingCasting(false);
-      }
-    }
+    const currentPromise = run();
+    castingFetchPromiseRef.current = currentPromise;
+    return currentPromise;
   };
 
   const updateCastingApplicationStatus = async (
@@ -2328,9 +2492,9 @@ function syncAllExistingRows() {
           <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 flex-1 overflow-hidden">
             <img 
               loading="lazy" 
-              src="/Logo de Planet Talent.PNG" 
+              src="/logo header.PNG" 
               alt="Planet Talent" 
-              className="h-7 sm:h-8 md:h-9 w-auto object-contain shrink-0 drop-shadow-sm" 
+              className="h-32 sm:h-44 md:h-56 w-auto object-contain shrink-0 py-1 drop-shadow-sm" 
             />
             
             <div className="h-4 w-px bg-white/20 hidden sm:block shrink-0"></div>
@@ -3780,7 +3944,7 @@ function syncAllExistingRows() {
                           { value: 'all', label: `Todas (${castingCounts.total})` },
                           { value: 'web', label: `Web (${castingCounts.total - castingCounts.deGoogleForm})` },
                           { value: 'google_form', label: `Google Form (${castingCounts.deGoogleForm})` },
-                          { value: 'missing_photos', label: `Sin fotos (${castingCounts.sinFotos})` },
+                          { value: 'missing_photos', label: loadingCastingPhotos ? `Sin fotos (...)` : `Sin fotos (${castingCounts.sinFotos})` },
                           {
                             value: 'incomplete',
                             label: `Datos faltantes (${castingApplications.filter((a) => a.datos_incompletos).length})`,
@@ -4084,13 +4248,7 @@ function syncAllExistingRows() {
                               {app.foto_cara ? (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setPreviewCastingPhotos({
-                                      cara: app.foto_cara || '',
-                                      cuerpo: app.foto_cuerpo || app.foto_cara || '',
-                                      nombre: `${app.nombre} ${app.apellidos}`,
-                                    })
-                                  }
+                                  onClick={() => openCastingPhotoPreview(app)}
                                   className="w-14 h-16 rounded-sm overflow-hidden border border-white/20 shrink-0 bg-black hover:opacity-95 transition-opacity relative group cursor-pointer"
                                   title="Ver fotos de cara y cuerpo"
                                 >
@@ -4184,13 +4342,7 @@ function syncAllExistingRows() {
                                 {(app.foto_cara || app.foto_cuerpo) && (
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      setPreviewCastingPhotos({
-                                        cara: app.foto_cara || '',
-                                        cuerpo: app.foto_cuerpo || app.foto_cara || '',
-                                        nombre: `${app.nombre} ${app.apellidos}`,
-                                      })
-                                    }
+                                    onClick={() => openCastingPhotoPreview(app)}
                                     className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-[#E2BA57] hover:underline font-medium cursor-pointer"
                                   >
                                     <Eye className="w-3.5 h-3.5" />

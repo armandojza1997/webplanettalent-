@@ -172,6 +172,8 @@ ALTER TABLE casting_applications ALTER COLUMN largo_cabello DROP NOT NULL;
 ALTER TABLE casting_applications ALTER COLUMN color_ojos DROP NOT NULL;
 ALTER TABLE casting_applications ALTER COLUMN tono_piel DROP NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_casting_applications_created_at ON casting_applications (created_at DESC);
+
 NOTIFY pgrst, 'reload schema';
 
 -- 8. Row Level Security (RLS) for casting_applications:
