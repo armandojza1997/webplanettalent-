@@ -992,7 +992,7 @@ function syncAllExistingRows() {
           err?.message || 'No se pudieron cargar las postulaciones de casting.'
         );
       } finally {
-        if (castingFetchGenRef.current === gen && !silent) {
+        if (castingFetchGenRef.current === gen) {
           setLoadingCasting(false);
         }
         if (castingFetchPromiseRef.current === currentPromise) {
