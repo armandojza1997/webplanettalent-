@@ -101,6 +101,21 @@ CREATE POLICY "Allow public delete from model-photos bucket" ON storage.objects
 -- ALTER TABLE models ADD COLUMN IF NOT EXISTS created_at timestamp with time zone default now();
 -- ALTER TABLE bookings ADD COLUMN IF NOT EXISTS telefono text;
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('model-photos', 'model-photos', true) ON CONFLICT (id) DO NOTHING;
+--
+-- -- Ejecutar para optimizar casting_applications y eliminar errores de statement timeout (57014):
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_id_desc ON casting_applications (id DESC);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_created_at_desc ON casting_applications (created_at DESC);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_estado ON casting_applications (estado);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_talento ON casting_applications (talento);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_origen ON casting_applications (origen);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_correo ON casting_applications (correo);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_whatsapp ON casting_applications (whatsapp);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_instagram ON casting_applications (instagram);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_edad ON casting_applications (edad);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_estado_id_desc ON casting_applications (estado, id DESC);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_talento_id_desc ON casting_applications (talento, id DESC);
+-- CREATE INDEX IF NOT EXISTS idx_casting_applications_comp_roster ON casting_applications (talento, estado, id DESC);
+-- NOTIFY pgrst, 'reload schema';
 
 -- 7. Create casting_applications table (17+ años)
 CREATE TABLE IF NOT EXISTS casting_applications (
@@ -172,7 +187,20 @@ ALTER TABLE casting_applications ALTER COLUMN largo_cabello DROP NOT NULL;
 ALTER TABLE casting_applications ALTER COLUMN color_ojos DROP NOT NULL;
 ALTER TABLE casting_applications ALTER COLUMN tono_piel DROP NOT NULL;
 
+-- Índices optimizados para acelerar consultas y prevenir errores de 'statement timeout' (57014) en casting_applications:
+CREATE INDEX IF NOT EXISTS idx_casting_applications_id_desc ON casting_applications (id DESC);
 CREATE INDEX IF NOT EXISTS idx_casting_applications_created_at ON casting_applications (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_created_at_desc ON casting_applications (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_estado ON casting_applications (estado);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_talento ON casting_applications (talento);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_origen ON casting_applications (origen);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_correo ON casting_applications (correo);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_whatsapp ON casting_applications (whatsapp);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_instagram ON casting_applications (instagram);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_edad ON casting_applications (edad);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_estado_id_desc ON casting_applications (estado, id DESC);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_talento_id_desc ON casting_applications (talento, id DESC);
+CREATE INDEX IF NOT EXISTS idx_casting_applications_comp_roster ON casting_applications (talento, estado, id DESC);
 
 NOTIFY pgrst, 'reload schema';
 

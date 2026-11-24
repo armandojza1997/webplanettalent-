@@ -88,7 +88,7 @@ export default async function handler(req: any, res: any) {
       const { data: pageData, error: fetchError } = await supabaseAdmin
         .from('casting_applications')
         .select(
-          'id, nombre, apellidos, fecha_nacimiento, edad, ciudad, whatsapp, correo, instagram, estatura, busto, cintura, caderas, talla_superior, talla_inferior, calzado, color_cabello, largo_cabello, color_ojos, tono_piel, tiene_piercings, tiene_tatuajes, detalle_piercings_tatuajes, foto_cara, foto_cuerpo, origen, talento, genero, formacion_artistica, nivel_ensenanza, nombre_artistico, estado_cabello, tiktok, notas_importacion, datos_incompletos, campos_faltantes, estado'
+          'id, nombre, apellidos, fecha_nacimiento, edad, ciudad, whatsapp, correo, instagram, estatura, busto, cintura, caderas, talla_superior, talla_inferior, calzado, color_cabello, largo_cabello, color_ojos, tono_piel, tiene_piercings, tiene_tatuajes, detalle_piercings_tatuajes, origen, talento, genero, formacion_artistica, nivel_ensenanza, nombre_artistico, estado_cabello, tiktok, notas_importacion, datos_incompletos, campos_faltantes, estado'
         )
         .order('id', { ascending: true })
         .range(offset, offset + pageSize - 1);
@@ -113,7 +113,9 @@ export default async function handler(req: any, res: any) {
         const { data: insertedRow, error: insertError } = await supabaseAdmin
           .from('casting_applications')
           .insert(candidate)
-          .select('*')
+          .select(
+            'id, nombre, apellidos, fecha_nacimiento, edad, ciudad, whatsapp, correo, instagram, estatura, busto, cintura, caderas, talla_superior, talla_inferior, calzado, color_cabello, largo_cabello, color_ojos, tono_piel, tiene_piercings, tiene_tatuajes, detalle_piercings_tatuajes, origen, talento, genero, formacion_artistica, nivel_ensenanza, nombre_artistico, estado_cabello, tiktok, notas_importacion, datos_incompletos, campos_faltantes, estado'
+          )
           .single();
 
         if (insertError) {
